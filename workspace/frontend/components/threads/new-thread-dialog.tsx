@@ -110,11 +110,25 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
   };
 
   // A gate only means anything once two agents can compete for the floor.
-  const showClarifyOption = selectedOnline.length >= 2;
+  // Offer it on the user's INTENT (what they selected), not on who happens to
+  // be online right now: deriving visibility from the live set alone meant an
+  // agent going offline made the whole option disappear mid-dialog and the
+  // thread was created ungated without anyone saying so.
+  const showClarifyOption = selected.size >= 2;
+  // Whether it can actually be applied is a separate question, and it is the
+  // live set that answers it.
+  const canGate = selectedOnline.length >= 2;
+  // A selected agent dropped off between opening the dialog and now. Creating
+  // regardless would silently produce something the user did not ask for — a
+  // smaller thread, and an ungated one. Make them resolve it.
+  const droppedOffline = selected.size - selectedOnline.length;
+  const gateBlocked = showClarifyOption && clarifyFirst && !canGate;
   // Checked but no valid owner: the thread would be created gated-but-unowned
   // (plan-only for everyone), so block here instead of shipping that state.
   const needsOwner =
-    showClarifyOption && clarifyFirst && !selectedOnline.includes(clarifyOwner);
+    showClarifyOption && canGate && clarifyFirst && !selectedOnline.includes(clarifyOwner);
+  // Never create an empty thread: every selected agent may have gone offline.
+  const nothingToCreate = selectedOnline.length === 0;
 
   const handleCreate = () => {
     // No leader is assigned at creation — the default "dynamic" mode doesn't
@@ -124,7 +138,7 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
     // The phase travels with the create event rather than a PATCH afterwards:
     // a thread that is ungated for even a moment can have its first message
     // routed to a builder before the gate lands.
-    const gated = showClarifyOption && clarifyFirst && !!clarifyOwner;
+    const gated = canGate && clarifyFirst && !!clarifyOwner;
     onCreateThread({
       participants,
       resumeFrom: resumeFrom || undefined,
@@ -264,7 +278,17 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
                 </div>
               </button>
 
-              {clarifyFirst && (
+              {clarifyFirst && gateBlocked && (
+                <div className="px-3">
+                  <p className="text-[11px] text-destructive leading-snug">
+                    {droppedOffline > 0
+                      ? `${droppedOffline} selected ${droppedOffline === 1 ? 'agent is' : 'agents are'} offline and won't join, leaving too few to clarify with. Wait for them, pick another agent, or uncheck the option above to start without the gate.`
+                      : 'Two or more online agents are needed to clarify. Pick another agent, or uncheck the option above.'}
+                  </p>
+                </div>
+              )}
+
+              {clarifyFirst && !gateBlocked && (
                 <div className="px-3">
                   <label className="block text-xs font-medium text-muted-foreground mb-1.5">
                     Who owns the requirement?
@@ -323,7 +347,10 @@ export function NewThreadDialog({ open, onOpenChange, agents, sessions, onCreate
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Cancel
           </Button>
-          <Button onClick={handleCreate} disabled={selected.size === 0 || needsOwner}>
+          <Button
+            onClick={handleCreate}
+            disabled={nothingToCreate || needsOwner || gateBlocked}
+          >
             {resumeFrom ? 'Resume Thread' : 'Start Thread'}
           </Button>
         </DialogFooter>
